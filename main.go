@@ -27,19 +27,20 @@ var (
 )
 
 type PacketInfo struct {
-	SrcIP   string
-	SrcPort string
-	DstIP   string
-	DstPort string
-	AppBody string
-	Error   error
+	SrcIP     string
+	DstIP     string
+	Transport string
+	SrcPort   string
+	DstPort   string
+	AppBody   string
+	Error     error
 }
 
 func (p PacketInfo) Stringify() string {
 	if p.Error != nil {
-		return fmt.Sprintf("%s:%s -> %s:%s :: %s [error=%s]", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.AppBody, p.Error)
+		return fmt.Sprintf("%s:%s -> %s:%s %s ::  %s [error=%s]", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody, p.Error)
 	}
-	return fmt.Sprintf("%s:%s -> %s:%s :: %s", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.AppBody)
+	return fmt.Sprintf("%s:%s -> %s:%s %s :: %s", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody)
 }
 
 func init() {
@@ -101,12 +102,13 @@ func main() {
 func informatizePacket(packet gopacket.Packet) PacketInfo {
 
 	var (
-		srcip   string
-		dstip   string
-		srcport string
-		dstport string
-		payload string
-		err     error
+		srcip     string
+		dstip     string
+		transport string = "UNDEF"
+		srcport   string
+		dstport   string
+		payload   string
+		err       error
 	)
 
 	// Network - IPv4/IPv6 Layer
@@ -127,12 +129,14 @@ func informatizePacket(packet gopacket.Packet) PacketInfo {
 	// Transport - TCP/UDP Layer
 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
 	if tcpLayer != nil {
+		transport = "TCP"
 		tcp, _ := tcpLayer.(*layers.TCP)
 		srcport = tcp.SrcPort.String()
 		dstport = tcp.DstPort.String()
 	} else {
 		udpLayer := packet.Layer(layers.LayerTypeUDP)
 		if udpLayer != nil {
+			transport = "UDP"
 			udp, _ := udpLayer.(*layers.UDP)
 			srcport = udp.SrcPort.String()
 			dstport = udp.DstPort.String()
@@ -153,8 +157,9 @@ func informatizePacket(packet gopacket.Packet) PacketInfo {
 	// return
 	return PacketInfo{
 		srcip,
-		srcport,
 		dstip,
+		transport,
+		srcport,
 		dstport,
 		payload,
 		err,
