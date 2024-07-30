@@ -17,6 +17,7 @@ import (
 const (
 	_SNAPLEN   = 262144 // The same default as tcpdump.
 	_ELSFILTER = "tcp and port 8021"
+	_IPXFILTER = "(ip||ip6) and "
 )
 
 var (
@@ -81,7 +82,7 @@ func main() {
 	if bpfilter == "" {
 		bpfilter = _ELSFILTER
 	}
-	bpfstring := bpfilter
+	bpfstring := _IPXFILTER + bpfilter
 
 	err = handle.SetBPFFilter(bpfstring)
 	if err != nil {
