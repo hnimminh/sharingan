@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,7 +94,7 @@ func main() {
 
 	// get decoded packets through chann
 	for packet := range packetSource.Packets() {
-		//log.Println(packet)
+		//zlog.Info().Msgf("%s", packet)
 		packetinfo := informatizePacket(packet).Stringify()
 		zlog.Info().Msgf("%s", packetinfo)
 	}
@@ -131,22 +132,23 @@ func informatizePacket(packet gopacket.Packet) PacketInfo {
 	if tcpLayer != nil {
 		transport = "TCP"
 		tcp, _ := tcpLayer.(*layers.TCP)
-		srcport = tcp.SrcPort.String()
-		dstport = tcp.DstPort.String()
+		srcport = strconv.Itoa(int(tcp.SrcPort))
+		dstport = strconv.Itoa(int(tcp.DstPort))
 	} else {
 		udpLayer := packet.Layer(layers.LayerTypeUDP)
 		if udpLayer != nil {
 			transport = "UDP"
 			udp, _ := udpLayer.(*layers.UDP)
-			srcport = udp.SrcPort.String()
-			dstport = udp.DstPort.String()
+			srcport = strconv.Itoa(int(udp.SrcPort))
+			dstport = strconv.Itoa(int(udp.DstPort))
 		}
 	}
 
 	// Application Layer
 	appLayer := packet.ApplicationLayer()
 	if appLayer != nil {
-		payload = string(appLayer.Payload())
+		payload = string(appLayer.LayerContents())
+		//payload = string(appLayer.Payload())
 	}
 
 	// error collection
