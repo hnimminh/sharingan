@@ -16,17 +16,30 @@ import (
 )
 
 const (
-	_SNAPLEN   = 262144 // The same default as tcpdump.
-	_ELSFILTER = "tcp and port 8021"
-	_IPXFILTER = "(ip||ip6) and "
+	_SNAPLEN = 262144 // The same default as tcpdump.
+	_TCP     = "TCP"
+	_UDP     = "UDP"
+
+	_ELS_FILTER  = "tcp and port 8021"
+	_NGCP_FILTER = "udp and port 22222"
+	_IP_FILTER   = "(ip||ip6) and "
 )
 
 var (
-	debug    bool
-	ifname   string
-	bpfilter string
+	debug        bool
+	jsonlog      bool
+	ifname       string
+	_appfiter    string
+	appfilter    string
+	bpfilter     string
+	bpfstring    string
+	appfiltermap map[string]string = map[string]string{
+		"ESL":  _ELS_FILTER,
+		"NGCP": _NGCP_FILTER,
+	}
 )
 
+// packet infomation structure
 type PacketInfo struct {
 	SrcIP     string
 	DstIP     string
@@ -39,7 +52,7 @@ type PacketInfo struct {
 
 func (p PacketInfo) Stringify() string {
 	if p.Error != nil {
-		return fmt.Sprintf("%s:%s -> %s:%s %s ::  %s [error=%s]", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody, p.Error)
+		return fmt.Sprintf("%s:%s -> %s:%s %s :: %s [error=%s]", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody, p.Error)
 	}
 	return fmt.Sprintf("%s:%s -> %s:%s %s :: %s", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody)
 }
@@ -48,43 +61,56 @@ func init() {
 	/******************* RUN VARIABLE *******************/
 	flag.BoolVar(&debug, "debug", false, "sets log level to debug")
 	flag.BoolVar(&debug, "d", false, "sets log level to debug")
+	flag.BoolVar(&jsonlog, "jsonlog", false, "log with json format, default is text")
+	flag.BoolVar(&jsonlog, "j", false, "log with json format, default is text")
 	flag.StringVar(&ifname, "interface", "any", "network interface name, ex: eth0")
 	flag.StringVar(&ifname, "i", "any", "network interface name, ex: eth0")
-	flag.StringVar(&bpfilter, "bpfilter", "", "your custom network filter expression (BPF)")
-	flag.StringVar(&bpfilter, "b", "", "your custom network filter expression (BPF)")
+	flag.StringVar(&_appfiter, "appfiter", "", "application that you want to observation")
+	flag.StringVar(&_appfiter, "a", "", "application that you want to observation")
+	flag.StringVar(&bpfilter, "bpfilter", "", "your custom network filter expression (BPF), overide appfiter default filter")
+	flag.StringVar(&bpfilter, "b", "", "your custom network filter expression (BPF), overide appfiter default filter")
 	flag.Parse()
 
 	/******************* LOG CONFIG *******************/
-	output := zerolog.ConsoleWriter{}
-	output.FormatLevel = func(i interface{}) string {
-		return strings.ToUpper(fmt.Sprintf("[%4s]", i))
+	if !jsonlog {
+		output := zerolog.ConsoleWriter{}
+		output.FormatLevel = func(i interface{}) string {
+			return strings.ToUpper(fmt.Sprintf("[%4s]", i))
+		}
+		zlog.Logger = zlog.Output(
+			zerolog.ConsoleWriter{
+				Out:         os.Stderr,
+				TimeFormat:  time.RFC3339,
+				FormatLevel: output.FormatLevel,
+				NoColor:     false},
+		)
 	}
-	zlog.Logger = zlog.Output(
-		zerolog.ConsoleWriter{
-			Out:         os.Stderr,
-			TimeFormat:  time.RFC3339,
-			FormatLevel: output.FormatLevel,
-			NoColor:     false},
-	)
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
+
+	/******************* VALIDATION *******************/
+	appfilter = appfiltermap[strings.ToUpper(_appfiter)]
+	if appfilter == "" && bpfilter == "" {
+		if _appfiter == "" {
+			zlog.Fatal().Str("module", "sharingan").Msg("atleast <appfilter> or <bgpfilter> must be set")
+		}
+		zlog.Fatal().Str("module", "sharingan").Msg("unsupport application to filter; current support ESL, NGCP")
+	}
+
+	bpfstring = _IP_FILTER + appfilter
+	if bpfilter != "" {
+		bpfstring = _IP_FILTER + bpfilter
+	}
 }
 
 func main() {
-
 	handle, err := pcap.OpenLive(ifname, _SNAPLEN, false, pcap.BlockForever)
 	if err != nil {
 		zlog.Fatal().Err(err).Str("module", "sharingan").Str("action", "capture").Msgf("error while capturing on dev [%s]", ifname)
 	}
 	defer handle.Close()
-
-	// filtering capture targets
-	if bpfilter == "" {
-		bpfilter = _ELSFILTER
-	}
-	bpfstring := _IPXFILTER + bpfilter
 
 	err = handle.SetBPFFilter(bpfstring)
 	if err != nil {
@@ -105,7 +131,7 @@ func informatizePacket(packet gopacket.Packet) PacketInfo {
 	var (
 		srcip     string
 		dstip     string
-		transport string = "UNDEF"
+		transport string = "UNSUPPORTED"
 		srcport   string
 		dstport   string
 		payload   string
@@ -130,14 +156,14 @@ func informatizePacket(packet gopacket.Packet) PacketInfo {
 	// Transport - TCP/UDP Layer
 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
 	if tcpLayer != nil {
-		transport = "TCP"
+		transport = _TCP
 		tcp, _ := tcpLayer.(*layers.TCP)
 		srcport = strconv.Itoa(int(tcp.SrcPort))
 		dstport = strconv.Itoa(int(tcp.DstPort))
 	} else {
 		udpLayer := packet.Layer(layers.LayerTypeUDP)
 		if udpLayer != nil {
-			transport = "UDP"
+			transport = _UDP
 			udp, _ := udpLayer.(*layers.UDP)
 			srcport = strconv.Itoa(int(udp.SrcPort))
 			dstport = strconv.Itoa(int(udp.DstPort))
