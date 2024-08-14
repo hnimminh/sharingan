@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
+	"log/syslog"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +30,7 @@ const (
 var (
 	debug        bool
 	jsonlog      bool
+	systlog      bool
 	ifname       string
 	_appfiter    string
 	appfilter    string
@@ -61,6 +64,8 @@ func init() {
 	/******************* RUN VARIABLE *******************/
 	flag.BoolVar(&debug, "debug", false, "sets log level to debug")
 	flag.BoolVar(&debug, "d", false, "sets log level to debug")
+	flag.BoolVar(&systlog, "syslog", false, "send to local system log")
+	flag.BoolVar(&systlog, "s", false, "send to local system log")
 	flag.BoolVar(&jsonlog, "jsonlog", false, "log with json format, default is text")
 	flag.BoolVar(&jsonlog, "j", false, "log with json format, default is text")
 	flag.StringVar(&ifname, "interface", "any", "network interface name, ex: eth0")
@@ -73,21 +78,25 @@ func init() {
 
 	/******************* LOG CONFIG *******************/
 	if !jsonlog {
-		output := zerolog.ConsoleWriter{}
-		output.FormatLevel = func(i interface{}) string {
-			return strings.ToUpper(fmt.Sprintf("[%4s]", i))
+		output := io.MultiWriter(os.Stdout)
+		if systlog {
+			zsyslog, _ := syslog.New(syslog.LOG_LOCAL7|syslog.LOG_DEBUG, "sharingan")
+			output = io.MultiWriter(os.Stdout, zsyslog)
 		}
 		zlog.Logger = zlog.Output(
 			zerolog.ConsoleWriter{
-				Out:         os.Stderr,
-				TimeFormat:  time.RFC3339,
-				FormatLevel: output.FormatLevel,
-				NoColor:     false},
+				Out:        output,
+				TimeFormat: time.RFC3339,
+				FormatLevel: func(i interface{}) string {
+					return strings.ToUpper(fmt.Sprintf("[%4s]", i))
+				},
+				NoColor: false},
 		)
 	}
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+		zlog.Logger = zlog.With().Caller().Logger()
 	}
 
 	/******************* VALIDATION *******************/
@@ -96,7 +105,7 @@ func init() {
 		if _appfiter == "" {
 			zlog.Fatal().Str("module", "sharingan").Msg("atleast <appfilter> or <bgpfilter> must be set")
 		}
-		zlog.Fatal().Str("module", "sharingan").Msg("unsupport application to filter; current support ESL, NGCP")
+		zlog.Fatal().Str("module", "sharingan").Msg("unsupport application to filter; current support <ESL>, <NGCP>")
 	}
 
 	bpfstring = _IP_FILTER + appfilter
