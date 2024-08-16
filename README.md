@@ -12,7 +12,22 @@
   <br>
   <strong>Sharingan</strong>
   <br>
-  <code>-- Comming Soon --</code>
+  <code>-- work in progress --</code>
   <br><br>
 </p>
+
+
+## Build
+
+```
+# prerequisite: libpcap-dev
+env GOOS=linux GOARCH=amd64 go build -o sharingan cmd/sharingan/main.go
+```
+
+## Dev Environment
+`docker-compose --file docker-compose.dev.yml up --build`
+
+### Get start
+`sharingan -d -i any -appfiter esl`
+
 
