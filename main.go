@@ -6,13 +6,13 @@ import (
 	"io"
 	"log/syslog"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	esl "github.com/hnimminh/sharingan/esl"
+
 	"github.com/rs/zerolog"
 	zlog "github.com/rs/zerolog/log"
 )
@@ -29,6 +29,7 @@ const (
 
 var (
 	debug        bool
+	verbose      bool
 	jsonlog      bool
 	systlog      bool
 	ifname       string
@@ -42,28 +43,11 @@ var (
 	}
 )
 
-// packet infomation structure
-type PacketInfo struct {
-	SrcIP     string
-	DstIP     string
-	Transport string
-	SrcPort   string
-	DstPort   string
-	AppBody   string
-	Error     error
-}
-
-func (p PacketInfo) Stringify() string {
-	if p.Error != nil {
-		return fmt.Sprintf("%s:%s -> %s:%s %s :: %s [error=%s]", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody, p.Error)
-	}
-	return fmt.Sprintf("%s:%s -> %s:%s %s :: %s", p.SrcIP, p.SrcPort, p.DstIP, p.DstPort, p.Transport, p.AppBody)
-}
-
 func init() {
 	/******************* RUN VARIABLE *******************/
 	flag.BoolVar(&debug, "debug", false, "sets log level to debug")
 	flag.BoolVar(&debug, "d", false, "sets log level to debug")
+	flag.BoolVar(&verbose, "verbose", false, "verbosely inspect packet")
 	flag.BoolVar(&systlog, "syslog", false, "send to local system log")
 	flag.BoolVar(&systlog, "s", false, "send to local system log")
 	flag.BoolVar(&jsonlog, "jsonlog", false, "log with json format, default is text")
@@ -90,7 +74,7 @@ func init() {
 				FormatLevel: func(i interface{}) string {
 					return strings.ToUpper(fmt.Sprintf("[%4s]", i))
 				},
-				NoColor: false},
+				NoColor: true},
 		)
 	}
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
@@ -125,80 +109,12 @@ func main() {
 	if err != nil {
 		zlog.Fatal().Err(err).Str("module", "sharingan").Str("action", "bpfilter").Msgf("error while filtering package [%s]", bpfilter)
 	}
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 
-	// get decoded packets through chann
-	for packet := range packetSource.Packets() {
-		//zlog.Info().Msgf("%s", packet)
-		packetinfo := informatizePacket(packet).Stringify()
-		zlog.Info().Msgf("%s", packetinfo)
-	}
-}
-
-func informatizePacket(packet gopacket.Packet) PacketInfo {
-
-	var (
-		srcip     string
-		dstip     string
-		transport string = "UNSUPPORTED"
-		srcport   string
-		dstport   string
-		payload   string
-		err       error
-	)
-
-	// Network - IPv4/IPv6 Layer
-	ipv4Layer := packet.Layer(layers.LayerTypeIPv4)
-	if ipv4Layer != nil {
-		ipv4, _ := ipv4Layer.(*layers.IPv4)
-		srcip = ipv4.SrcIP.String()
-		dstip = ipv4.DstIP.String()
-	} else {
-		ipv6Layer := packet.Layer(layers.LayerTypeIPv6)
-		if ipv6Layer != nil {
-			ipv6, _ := ipv6Layer.(*layers.IPv6)
-			srcip = ipv6.SrcIP.String()
-			dstip = ipv6.DstIP.String()
+	packetsrc := gopacket.NewPacketSource(handle, handle.LinkType())
+	for packet := range packetsrc.Packets() {
+		packetstr := esl.Inspect(packet, verbose).Stringify(debug)
+		if packetstr != "" {
+			zlog.Info().Msg(packetstr)
 		}
-	}
-
-	// Transport - TCP/UDP Layer
-	tcpLayer := packet.Layer(layers.LayerTypeTCP)
-	if tcpLayer != nil {
-		transport = _TCP
-		tcp, _ := tcpLayer.(*layers.TCP)
-		srcport = strconv.Itoa(int(tcp.SrcPort))
-		dstport = strconv.Itoa(int(tcp.DstPort))
-	} else {
-		udpLayer := packet.Layer(layers.LayerTypeUDP)
-		if udpLayer != nil {
-			transport = _UDP
-			udp, _ := udpLayer.(*layers.UDP)
-			srcport = strconv.Itoa(int(udp.SrcPort))
-			dstport = strconv.Itoa(int(udp.DstPort))
-		}
-	}
-
-	// Application Layer
-	appLayer := packet.ApplicationLayer()
-	if appLayer != nil {
-		payload = string(appLayer.LayerContents())
-		//payload = string(appLayer.Payload())
-	}
-
-	// error collection
-	if _err := packet.ErrorLayer(); _err != nil {
-		err = _err.Error()
-	}
-
-	// return
-	return PacketInfo{
-		srcip,
-		dstip,
-		transport,
-		srcport,
-		dstport,
-		payload,
-		err,
 	}
 }
